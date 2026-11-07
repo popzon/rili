@@ -4,6 +4,7 @@
 The app expects the old 51wnl config server format:
   {"status":1,"r":"<update tag>","msg":{"Vocation_ZH_CN":"<base64 json>","Festival_ZH_CN":"<base64 json>"}}
 Vocation_ZH_CN: {"yyyyMMdd": 1 (休) | 2 (班)}
+Festival_ZH_CN: S/L/W rules + Y (exact yyyyMMdd, used for US holidays; needs app v1.2.2 US build)
 Holiday data comes from https://github.com/NateScarlet/holiday-cn
 """
 import base64, datetime, json, os, sys, urllib.request
@@ -58,10 +59,52 @@ FEST = {
 }
 
 
+def _nth_weekday(y, m, wd, n):
+    """n-th weekday (Mon=0) of month; n=-1 = last."""
+    if n > 0:
+        d = datetime.date(y, m, 1)
+        d += datetime.timedelta(days=(wd - d.weekday()) % 7 + 7 * (n - 1))
+        return d
+    nxt = datetime.date(y + (m == 12), m % 12 + 1, 1)
+    d = nxt - datetime.timedelta(days=1)
+    return d - datetime.timedelta(days=(d.weekday() - wd) % 7)
+
+
+def _easter(y):
+    a = y % 19; b = y // 100; c = y % 100; d = b // 4; e = b % 4
+    f = (b + 8) // 25; g = (b - f + 1) // 3; h = (19 * a + b - d - g + 15) % 30
+    i = c // 4; k = c % 4; l = (32 + 2 * e + 2 * i - h - k) % 7
+    m = (a + 11 * h + 22 * l) // 451
+    month = (h + l - 7 * m + 114) // 31; day = (h + l - 7 * m + 114) % 31 + 1
+    return datetime.date(y, month, day)
+
+
+# US holidays (Y table: exact yyyyMMdd per year). Short names fit the month grid.
+def us_holidays(y):
+    MON, THU = 0, 3
+    h = []
+    if y >= 1986: h.append((_nth_weekday(y, 1, MON, 3), '金恩日', 5))           # Martin Luther King Jr. Day
+    h.append((_nth_weekday(y, 2, MON, 3), '总统日', 5))                         # Presidents' Day
+    h.append((_easter(y), '复活节', 4))                                          # Easter
+    h.append((_nth_weekday(y, 5, MON, -1), '阵亡将士', 5))                      # Memorial Day
+    if y >= 2021: h.append((datetime.date(y, 6, 19), '六月节', 5))              # Juneteenth
+    h.append((datetime.date(y, 7, 4), '独立日', 5))                             # Independence Day
+    h.append((_nth_weekday(y, 9, MON, 1), '劳工节', 5))                         # Labor Day
+    h.append((_nth_weekday(y, 10, MON, 2), '哥伦布日', 5))                      # Columbus / Indigenous Peoples' Day
+    h.append((datetime.date(y, 11, 11), '老兵节', 5))                           # Veterans Day
+    h.append((_nth_weekday(y, 11, THU, 4) + datetime.timedelta(days=1), '黑五', 3))  # Black Friday
+    return h
+
+
 def festival():
     out = {}
     for t, m in FEST.items():
-        out[t] = {k: [{'V': n, 'a': n, 'b': p, 'c': 1900}] for k, (n, p) in m.items()}
+        out[t] = {k: [{'V': n, 'a': n, 'b': p, 'c': 1900, 'P': p, 'Y': 1900}] for k, (n, p) in m.items()}
+    yt = {}
+    for y in range(2000, 2061):
+        for d, n, p in us_holidays(y):
+            yt.setdefault(d.strftime('%Y%m%d'), []).append({'V': n, 'a': n, 'b': p, 'c': 1900, 'P': p, 'Y': 1900})
+    out['Y'] = yt
     return out
 
 
