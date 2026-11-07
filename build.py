@@ -3,7 +3,7 @@
 
 The app expects the old 51wnl config server format:
   {"status":1,"r":"<update tag>","msg":{"Vocation_ZH_CN":"<base64 json>","Festival_ZH_CN":"<base64 json>"}}
-Vocation_ZH_CN: {"yyyyMMdd": 1 (休) | 2 (班)}
+Vocation_ZH_CN: {"yyyyMMdd": 1 (休) | 2 (班) | 3 (美国联邦假日 休)}
 Festival_ZH_CN: S/L/W rules + Y (exact yyyyMMdd, used for US holidays; needs app v1.2.2 US build)
 Holiday data comes from https://github.com/NateScarlet/holiday-cn
 """
@@ -103,9 +103,38 @@ def festival():
     yt = {}
     for y in range(2000, 2061):
         for d, n, p in us_holidays(y):
-            yt.setdefault(d.strftime('%Y%m%d'), []).append({'V': n, 'a': n, 'b': p, 'c': 1900, 'P': p, 'Y': 1900})
+            yt.setdefault(d.strftime('%Y%m%d'), []).append({'V': n, 'a': n, 'b': p, 'c': 1900, 'P': p, 'Y': 1900, 'K': 'US'})
     out['Y'] = yt
+    # Thanksgiving is US-only: tag it so the app colors it like other US holidays
+    for e in out['W'].get('1144', []):
+        e['K'] = 'US'
     return out
+
+
+# US federal holidays -> Vocation value 3 (US 休, drawn as a lavender outline mark).
+# Fixed-date holidays falling on Sat/Sun also mark the observed Fri/Mon.
+def us_federal_days(y):
+    MON, THU = 0, 3
+    days = [datetime.date(y, 1, 1), _nth_weekday(y, 2, MON, 3), _nth_weekday(y, 5, MON, -1),
+            datetime.date(y, 7, 4), _nth_weekday(y, 9, MON, 1), _nth_weekday(y, 10, MON, 2),
+            datetime.date(y, 11, 11), _nth_weekday(y, 11, THU, 4), datetime.date(y, 12, 25)]
+    if y >= 1986: days.append(_nth_weekday(y, 1, MON, 3))
+    if y >= 2021: days.append(datetime.date(y, 6, 19))
+    out = set()
+    for d in days:
+        out.add(d)
+        if d.weekday() == 5: out.add(d - datetime.timedelta(days=1))
+        elif d.weekday() == 6: out.add(d + datetime.timedelta(days=1))
+    return out
+
+
+def add_us_rest(v):
+    for y in range(2000, 2061):
+        for d in us_federal_days(y):
+            k = d.strftime('%Y%m%d')
+            if k not in v:  # Chinese 休/班 wins when both apply
+                v[k] = 3
+    return dict(sorted(v.items()))
 
 
 def b64(o):
@@ -117,6 +146,7 @@ def main():
     v = vocation(local)
     if len(v) < 100:
         sys.exit('holiday data looks empty, not writing')
+    v = add_us_rest(v)
     body = {
         'status': 1,
         'r': datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%d%H%M%S'),
